@@ -22,6 +22,7 @@ def fingerprint(instance: Instance) -> Tuple[str, ...]:
     """
     text_tuple = tuple(t.text for t in instance.fields["tokens"].tokens)  # type: ignore
     labels_tuple = tuple(instance.fields["tags"].labels)  # type: ignore
+
     return text_tuple + labels_tuple
 
 
@@ -46,10 +47,12 @@ class TestShardedDatasetReader(AllenNlpTestCase):
 
         # use SequenceTaggingDatasetReader as the base reader
         self.base_reader = SequenceTaggingDatasetReader(lazy=True)
+        self.base_reader_multi_process = SequenceTaggingDatasetReader(lazy=True)
         base_file_path = AllenNlpTestCase.FIXTURES_ROOT / "data" / "sequence_tagging.tsv"
 
         # Make 100 copies of the data
         raw_data = open(base_file_path).read()
+
         for i in range(100):
             file_path = self.TEST_DIR / f"identical_{i}.tsv"
             with open(file_path, "w") as f:
@@ -68,9 +71,13 @@ class TestShardedDatasetReader(AllenNlpTestCase):
         os.chdir(current_dir)
 
         self.reader = ShardedDatasetReader(base_reader=self.base_reader)
+        self.reader_multi_process = ShardedDatasetReader(
+            base_reader=self.base_reader_multi_process, multi_process=True
+        )
 
-    def read_and_check_instances(self, filepath: str):
+    def read_and_check_instances(self, reader: ShardedDatasetReader, filepath: str):
         all_instances = []
+
         for instance in self.reader.read(filepath):
             all_instances.append(instance)
 
@@ -87,7 +94,21 @@ class TestShardedDatasetReader(AllenNlpTestCase):
         assert counts[("birds", "are", "animals", ".", "N", "V", "N", "N")] == 100
 
     def test_sharded_read_glob(self):
-        self.read_and_check_instances(self.identical_files_glob)
+        self.read_and_check_instances(
+            self.reader,
+            self.identical_files_glob,
+        )
+        self.read_and_check_instances(
+            self.reader_multi_process,
+            self.identical_files_glob,
+        )
 
     def test_sharded_read_archive(self):
-        self.read_and_check_instances(str(self.archive_filename))
+        self.read_and_check_instances(
+            self.reader,
+            str(self.archive_filename),
+        )
+        self.read_and_check_instances(
+            self.reader_multi_process,
+            str(self.archive_filename),
+        )

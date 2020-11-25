@@ -34,14 +34,28 @@ class ShardedDatasetReader(DatasetReader):
 
     base_reader : `DatasetReader`
         Reader with a read method that accepts a single file.
+    multi_process: If true set `manual_multi_process_sharding` instead of `manual_distributed_sharding`.
     """
 
-    def __init__(self, base_reader: DatasetReader, **kwargs) -> None:
-        super().__init__(manual_distributed_sharding=True, **kwargs)
+    def __init__(self, base_reader: DatasetReader, multi_process: bool = False, **kwargs) -> None:
+        worker_info = torch.utils.data.get_worker_info()
+        multi_process = multi_process and (worker_info is not None)
+        super().__init__(
+            manual_distributed_sharding=(not multi_process),
+            manual_multi_process_sharding=multi_process,
+            **kwargs,
+        )
+        distributed = not multi_process
 
-        if util.is_distributed():
+        if distributed and util.is_distributed():
             self._rank = torch.distributed.get_rank()
             self._world_size = torch.distributed.get_world_size()
+        elif distributed:
+            self._rank = 0
+            self._world_size = 1
+        elif multi_process:
+            self._rank = worker_info.id
+            self._world_size = worker_info.num_workers
         else:
             self._rank = 0
             self._world_size = 1
@@ -50,6 +64,7 @@ class ShardedDatasetReader(DatasetReader):
         # We have to check that the base reader doesn't implement manual distributed
         # sharding itself, because if it does, then only a fraction of the instances
         # will be read.
+
         if getattr(self.reader, "manual_distributed_sharding", False):
             raise ValueError(
                 "The base reader of a sharded dataset reader should not implement "
@@ -63,11 +78,13 @@ class ShardedDatasetReader(DatasetReader):
         """
         Just delegate to the base reader text_to_instance.
         """
+
         return self.reader.text_to_instance(*args, **kwargs)  # type: ignore
 
     def _read(self, file_path: str) -> Iterable[Instance]:
         try:
             maybe_extracted_archive = cached_path(file_path, extract_archive=True)
+
             if not os.path.isdir(maybe_extracted_archive):
                 # This isn't a directory, so `file_path` is just a file.
                 raise ConfigurationError(f"{file_path} should be an archive or directory")
@@ -76,11 +93,13 @@ class ShardedDatasetReader(DatasetReader):
                 for p in os.listdir(maybe_extracted_archive)
                 if not p.startswith(".")
             ]
+
             if not shards:
                 raise ConfigurationError(f"No files found in {file_path}")
         except FileNotFoundError:
             # Not a local or remote archive, so treat as a glob.
             shards = glob.glob(file_path)
+
             if not shards:
                 raise ConfigurationError(f"No files found matching {file_path}")
 
@@ -90,5 +109,6 @@ class ShardedDatasetReader(DatasetReader):
         for i, shard in enumerate(shards):
             if i % self._world_size == self._rank:
                 logger.info(f"reading instances from {shard}")
+
                 for instance in self.reader.read(shard):
                     yield instance

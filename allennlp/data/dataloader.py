@@ -15,6 +15,7 @@ TensorDict = Dict[str, Union[torch.Tensor, Dict[str, torch.Tensor]]]
 
 def allennlp_collate(instances: List[Instance]) -> TensorDict:
     batch = Batch(instances)
+
     return batch.as_tensor_dict(batch.get_padding_lengths())
 
 
@@ -84,6 +85,8 @@ class PyTorchDataLoader(data.DataLoader, DataLoader):
         worker_init_fn=None,
         multiprocessing_context: str = None,
         batches_per_epoch: int = None,
+        prefetch_factor: int = 2,
+        persistent_workers: bool = False,
     ):
         super().__init__(
             dataset=dataset,
@@ -98,6 +101,8 @@ class PyTorchDataLoader(data.DataLoader, DataLoader):
             timeout=timeout,
             worker_init_fn=worker_init_fn,
             multiprocessing_context=multiprocessing_context,
+            prefetch_factor=prefetch_factor,
+            persistent_workers=persistent_workers,
         )
         self._data_generator = super().__iter__()
         self._batches_per_epoch = batches_per_epoch
@@ -105,6 +110,7 @@ class PyTorchDataLoader(data.DataLoader, DataLoader):
     def __len__(self):
         if self._batches_per_epoch is not None:
             return self._batches_per_epoch
+
         return super().__len__()
 
     def __iter__(self):
